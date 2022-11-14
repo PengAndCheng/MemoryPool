@@ -78,7 +78,7 @@ struct memp {
 /* if MEMP_OVERFLOW_CHECK is turned on, we reserve some bytes at the beginning
  * and at the end of each element, initialize them as 0xcd and check
  * them later. */                                                       //如果MEMP_OVERFLOW_CHECK处于打开状态，我们将在开头保留一些字节在每个元素的末尾，将它们初始化为0xcd并检查以后再给他们。
-/* If MEMP_OVERFLOW_CHECK is >= 2, on every call to memp_malloc or memp_free,
+/* If MEMP_OVERFLOW_CHECK is >= 2, on every call to pool_malloc or pool_free,
  * every single element in each pool is checked!
  * This is VERY SLOW but also very helpful. */                          //如果MEMP_OVERFLOW_CHECK>=2，检查每个池中的每个元素！这很慢，但也很有帮助。
 /* MEMP_SANITY_REGION_BEFORE and MEMP_SANITY_REGION_AFTER can be overridden in
@@ -129,12 +129,14 @@ struct memp {
 const u16_t memp_sizes[MEMP_MAX] = {
 #define LWIP_MEMPOOL(name,num,size,desc)  LWIP_MEM_ALIGN_SIZE(size),
 #include "pool_std.h"
+#undef LWIP_MEMPOOL
 };
 
 //记录每一类型的内存池的数量
 static const u16_t memp_num[MEMP_MAX] = {
 #define LWIP_MEMPOOL(name,num,size,desc)  (num),
 #include "pool_std.h"
+#undef LWIP_MEMPOOL
 };
 
 //记录各类型空闲内存池的首地址
@@ -154,11 +156,13 @@ static struct memp *memp_tab[MEMP_MAX];
 #define LWIP_MEMPOOL(name,num,size,desc) u8_t memp_memory_ ## name ## _base \
   [((num) * (MEMP_SIZE + MEMP_ALIGN_SIZE(size)))];   
 #include "pool_std.h"
+#undef LWIP_MEMPOOL
 
 /** This array holds the base of each memory pool. */
 static u8_t *const memp_bases[] = { 
 #define LWIP_MEMPOOL(name,num,size,desc) memp_memory_ ## name ## _base,   
 #include "pool_std.h"
+#undef LWIP_MEMPOOL
 };
 
 #else /* MEMP_SEPARATE_POOLS */ //否则使用单一内存池
@@ -166,6 +170,7 @@ static u8_t *const memp_bases[] = {
 static u8_t memp_memory[MEM_ALIGNMENT - 1 
 #define LWIP_MEMPOOL(name,num,size,desc) + ( (num) * (MEMP_SIZE + MEMP_ALIGN_SIZE(size) ) )
 #include "pool_std.h"
+#undef LWIP_MEMPOOL
 ];
 
 static const int memp_memory_size = sizeof(memp_memory);
@@ -179,6 +184,7 @@ static const int memp_memory_size = sizeof(memp_memory);
 static const char *memp_desc[MEMP_MAX] = {
 #define LWIP_MEMPOOL(name,num,size,desc)  (desc),
 #include "pool_std.h"
+#undef LWIP_MEMPOOL
 };
 #endif /* LWIP_DEBUG */
 
@@ -220,6 +226,7 @@ memp_sanity(void)
 static const char * memp_overflow_names[] = {
 #define LWIP_MEMPOOL(name,num,size,desc) "/"desc,
 #include "pool_std.h"
+#undef LWIP_MEMPOOL
 };
 #endif
 
@@ -380,15 +387,7 @@ memp_overflow_init(void)
 
 
 
-//声明放这里 因为使用的是三方API
-static void memp_init(void);
-#if MEMP_OVERFLOW_CHECK
-static void *memp_malloc_fn(memp_t type, const char* file, const int line);
-#define memp_malloc(t) memp_malloc_fn((t), __FILE__, __LINE__)
-#else
-static void *memp_malloc(memp_t type);
-#endif
-static void  memp_free(memp_t type, void *mem);
+
 
 
 
@@ -412,8 +411,8 @@ static void  memp_free(memp_t type, void *mem);
  * 
  * Carves out memp_memory into linked lists for each pool-type.
  */
-static void
-memp_init(void)
+void
+pool_init(void)
 {
   struct memp *memp;
   u16_t i, j;
@@ -426,7 +425,7 @@ memp_init(void)
     MEMP_STATS_AVAIL(avail, i, memp_num[i]);
   }
   */
-  //有说法是在这里将内存池数据初始化为0 不再这里初始化值可以重复调用memp_init恢复链表能力
+  //有说法是在这里将内存池数据初始化为0 不再这里初始化值可以重复调用pool_init恢复链表能力
   //但是申请后得到的内存一般都自行先初始化 所以也没有必要重新初始化数据
 
 
@@ -477,22 +476,22 @@ memp_init(void)
  *
  * @return a pointer to the allocated memory or a NULL pointer on error
  */
-static void *
+void *
 #if !MEMP_OVERFLOW_CHECK
-memp_malloc(memp_t type)
+pool_malloc(memp_t type)
 #else
-memp_malloc_fn(memp_t type, const char* file, const int line)
+pool_malloc_fn(memp_t type, const char* file, const int line)
 #endif
 {
   struct memp *memp;
   //SYS_ARCH_DECL_PROTECT(old_level);进入临界区
  
-  //LWIP_ERROR("memp_malloc: type < MEMP_MAX", (type < MEMP_MAX), return NULL;);不存在此类型内存池 返回null;
+  //LWIP_ERROR("pool_malloc: type < MEMP_MAX", (type < MEMP_MAX), return NULL;);不存在此类型内存池 返回null;
   if (type < MEMP_MAX)//等价以上
   {
     //合法
   }else{
-      PRINTF("memp_malloc: type >= MEMP_MAX;\r\n");//不存在内存池
+      PRINTF("pool_malloc: type >= MEMP_MAX;\r\n");//不存在内存池
       return NULL;
   }
 
@@ -512,13 +511,13 @@ memp_malloc_fn(memp_t type, const char* file, const int line)
     memp->line = line;
 #endif /* MEMP_OVERFLOW_CHECK */
     //MEMP_STATS_INC_USED(used, type);
-    LWIP_ASSERT("memp_malloc: memp properly aligned",
+    LWIP_ASSERT("pool_malloc: memp properly aligned",
                 ((mem_ptr_t)memp % MEM_ALIGNMENT) == 0);
 
     memp = (struct memp*)(void *)((u8_t*)memp + MEMP_SIZE);
   } else {
-    //LWIP_DEBUGF(MEMP_DEBUG | LWIP_DBG_LEVEL_SERIOUS, ("memp_malloc: out of memory in pool %s\n", memp_desc[type]));
-    PRINTF("memp_malloc: out of memory in pool %s\n", memp_desc[type]);
+    //LWIP_DEBUGF(MEMP_DEBUG | LWIP_DBG_LEVEL_SERIOUS, ("pool_malloc: out of memory in pool %s\n", memp_desc[type]));
+    PRINTF("pool_malloc: out of memory in pool %s\n", memp_desc[type]);
     //MEMP_STATS_INC(err, type);
   }
 
@@ -533,8 +532,8 @@ memp_malloc_fn(memp_t type, const char* file, const int line)
  * @param type the pool where to put mem
  * @param mem the memp element to free
  */
-static void
-memp_free(memp_t type, void *mem)
+void
+pool_free(memp_t type, void *mem)
 {
   struct memp *memp;
   //SYS_ARCH_DECL_PROTECT(old_level);进入临界区
@@ -542,7 +541,7 @@ memp_free(memp_t type, void *mem)
   if (mem == NULL) {
     return;
   }
-  LWIP_ASSERT("memp_free: mem properly aligned",
+  LWIP_ASSERT("pool_free: mem properly aligned",
                 ((mem_ptr_t)mem % MEM_ALIGNMENT) == 0);
 
   memp = (struct memp *)(void *)((u8_t*)mem - MEMP_SIZE);
@@ -571,8 +570,8 @@ memp_free(memp_t type, void *mem)
 
 
 
-void cp_memp_memory_reset0(void){
-    //有说法是在这memp_init将内存池数据初始化为0 不再memp_init初始化值可以重复调用memp_init恢复链表能力
+void memp_memory_reset0(void){
+    //有说法是在这pool_init将内存池数据初始化为0 不再pool_init初始化值可以重复调用pool_init恢复链表能力
     //但是申请后得到的内存一般都自行先初始化 所以也没有必要重新初始化数据
     int i;
 #if MEMP_SEPARATE_POOLS
@@ -589,9 +588,6 @@ void cp_memp_memory_reset0(void){
 #endif
 }
 
-void cp_memp_init(void){
-    memp_init();
-}
 
 void memp_desc_printf(void){
     int i;
@@ -608,15 +604,6 @@ void memp_desc_printf(void){
     }
     //应该存在memp_memory_size = memp_memory_sizes
     PRINTF("memp_memory_size=%d, memp_memory_sizes=%d;\r\n",memp_memory_size,memp_memory_sizes);
-}
-
-
-void *cp_memp_malloc(memp_t type){
-    return memp_malloc(type);
-}
-
-void  cp_memp_free(memp_t type, void *mem){
-    return memp_free(type, mem);
 }
 
 
